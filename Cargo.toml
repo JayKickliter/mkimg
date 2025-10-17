@@ -1,0 +1,17 @@
+[package]
+name    = "mkimg"
+edition = "2021"
+version = "0.1.0"
+
+[[bin]]
+name = "mkimg"
+path = "bin/mkimg.rs"
+doc  = false
+
+[dependencies]
+anyhow   = "1"
+camino   = "1"
+clap     = { version = "4", features = ["derive"] }
+fatfs    = "0"
+fscommon = "0"
+walkdir  = "2"
