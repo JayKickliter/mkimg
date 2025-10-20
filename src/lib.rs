@@ -7,8 +7,15 @@ use std::{
 };
 use walkdir::WalkDir;
 
-/// Create a plain image.
-pub fn create(img_file: &mut File, root: &Utf8Path, exclude_root: bool) -> Result<()> {
+/// Mapping from external to image file.
+pub struct FileMapping {
+    /// Path to source file in external filesystem.
+    pub ext: Utf8PathBuf,
+    /// Where to place the file in the image filesystem.
+    pub int: Utf8PathBuf,
+}
+
+pub fn create_mappings(root: &Utf8Path, exclude_root: bool) -> Result<Vec<FileMapping>> {
     if !root.is_dir() {
         bail!("root must be a directory")
     };
@@ -20,9 +27,14 @@ pub fn create(img_file: &mut File, root: &Utf8Path, exclude_root: bool) -> Resul
         Utf8PathBuf::try_from(canon)?
     };
     let tree = WalkDir::new(root);
-    let rerooted_entries = reroot_tree(&canon_root, tree)?;
+    let rerooted_mappings = reroot_tree(&canon_root, tree)?;
+    Ok(rerooted_mappings)
+}
+
+/// Create a plain image.
+pub fn create(img_file: &mut File, file_mappings: &[FileMapping]) -> Result<()> {
     img_file.set_len(6 * 1024 * 1024)?;
-    write_fs(img_file, &rerooted_entries, fatfs::FatType::Fat16)?;
+    write_fs(img_file, file_mappings, fatfs::FatType::Fat16)?;
     Ok(())
 }
 
@@ -75,11 +87,7 @@ pub fn extract(img_file: &mut File, target_path: &Utf8Path, buf: &mut Vec<u8>) -
 }
 
 // Create filesystem with FAT32 and copy files
-fn write_fs(
-    img_file: &mut File,
-    tree: &[(Utf8PathBuf, Utf8PathBuf)],
-    fat_type: fatfs::FatType,
-) -> Result<()> {
+fn write_fs(img_file: &mut File, tree: &[FileMapping], fat_type: fatfs::FatType) -> Result<()> {
     {
         fatfs::format_volume(
             &mut *img_file,
@@ -90,7 +98,11 @@ fn write_fs(
     let root_dir = fs.root_dir();
 
     // Copy files from the source directory
-    for (external_path, internal_path) in tree {
+    for FileMapping {
+        ext: external_path,
+        int: internal_path,
+    } in tree
+    {
         // Skip directories - only process files
         if external_path.is_dir() {
             continue;
@@ -189,28 +201,10 @@ fn examine_directory(
     Ok(())
 }
 
-pub fn create_deceptive_img(
-    img_file: &mut File,
-    root: &Utf8Path,
-    exclude_root: bool,
-) -> Result<()> {
-    if !root.is_dir() {
-        bail!("root must be a directory")
-    };
-
-    let canon_root = {
-        let mut canon = root.canonicalize()?;
-        if !exclude_root {
-            canon.pop();
-        }
-        Utf8PathBuf::try_from(canon)?
-    };
-
-    let tree = WalkDir::new(root);
-    let rerooted_entries = reroot_tree(&canon_root, tree)?;
+pub fn create_deceptive_img(img_file: &mut File, file_mappings: &[FileMapping]) -> Result<()> {
     // 32MB real size to ensure FAT32
     img_file.set_len(32 * 1024 * 1024)?;
-    write_fs(img_file, &rerooted_entries, fatfs::FatType::Fat32)?;
+    write_fs(img_file, file_mappings, fatfs::FatType::Fat32)?;
     apply_size_deception(img_file)?;
     shrink_file_after_deception(img_file)?;
     println!("Deceptive img created successfully!");
@@ -292,7 +286,7 @@ fn shrink_file_after_deception(img_file: &mut File) -> Result<()> {
 }
 
 /// Returns `(total size, [(external src, internal path), ..])`
-fn reroot_tree(canon_root: &Utf8Path, walkdir: WalkDir) -> Result<Vec<(Utf8PathBuf, Utf8PathBuf)>> {
+fn reroot_tree(canon_root: &Utf8Path, walkdir: WalkDir) -> Result<Vec<FileMapping>> {
     let mut out = Vec::new();
     for entry in walkdir {
         let entry = entry?;
@@ -301,7 +295,10 @@ fn reroot_tree(canon_root: &Utf8Path, walkdir: WalkDir) -> Result<Vec<(Utf8PathB
         let rerooted_path = reroot_path(canon_root, &entry_path_buf)?;
         println!("{rerooted_path} {entry_path_buf} {len}");
         if rerooted_path != Utf8Path::new("") {
-            out.push((entry_path_buf, rerooted_path));
+            out.push(FileMapping {
+                ext: entry_path_buf,
+                int: rerooted_path,
+            });
         }
     }
     Ok(out)
