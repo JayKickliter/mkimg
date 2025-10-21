@@ -1,8 +1,7 @@
 use anyhow::{bail, Result};
-use camino::Utf8PathBuf;
 use clap::Parser;
 use mkimg::{self, FileMapping};
-use std::fs::File;
+use std::{fs::File, path::PathBuf};
 
 #[derive(Parser)]
 struct Cli {
@@ -15,7 +14,7 @@ enum Commands {
     /// Create a disk img (deceptive by default).
     Create {
         /// Output path name for the created img.
-        img_path: Option<Utf8PathBuf>,
+        img_path: Option<PathBuf>,
         /// Create a plain (non-deceptive) img instead of deceptive.
         #[arg(long)]
         plain: bool,
@@ -27,25 +26,25 @@ enum Commands {
         exclude_root: bool,
         /// The root path of the created img.
         #[arg(long)]
-        root: Option<Utf8PathBuf>,
+        root: Option<PathBuf>,
         /// A mapping from <EXT PATH> <INT PATH>.
         #[arg(long, conflicts_with = "root", num_args = 2)]
-        map: Vec<Utf8PathBuf>,
+        map: Vec<PathBuf>,
     },
     /// Examine an existing disk img
     Examine {
         /// Path to the disk img to examine
-        img_path: Utf8PathBuf,
+        img_path: PathBuf,
     },
     /// Extract a file from a disk img.
     Extract {
         /// Path to the disk img.
-        img_path: Utf8PathBuf,
+        img_path: PathBuf,
         /// Path to the file within the img (e.g.,
         /// ""EFI/boot/bootx64.efi"").
-        file_path: Utf8PathBuf,
+        file_path: PathBuf,
         /// Output path for the extracted file/
-        output_path: Utf8PathBuf,
+        output_path: PathBuf,
     },
 }
 
@@ -76,9 +75,9 @@ fn main() -> Result<()> {
             };
             let img_path = img_path.unwrap_or_else(|| {
                 if plain {
-                    Utf8PathBuf::from("disk.img")
+                    PathBuf::from("disk.img")
                 } else {
-                    Utf8PathBuf::from("deceptive.img")
+                    PathBuf::from("deceptive.img")
                 }
             });
             let mut img_file = std::fs::OpenOptions::new()

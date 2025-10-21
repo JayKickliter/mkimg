@@ -1,18 +1,18 @@
-use anyhow::{bail, Result};
-use camino::{Utf8Path, Utf8PathBuf};
+use anyhow::{anyhow, bail, Result};
 use fatfs::{FileSystem, FormatVolumeOptions, FsOptions};
 use std::{
     fs::File,
     io::{Read, Seek, SeekFrom, Write},
+    path::{Path, PathBuf},
 };
 use walkdir::WalkDir;
 
 /// Mapping from external to image file.
 pub struct FileMapping {
     /// Path to source file in external filesystem.
-    pub ext: Utf8PathBuf,
+    pub ext: PathBuf,
     /// Where to place the file in the image filesystem.
-    pub int: Utf8PathBuf,
+    pub int: PathBuf,
 }
 
 /// Scans a directory tree and creates file mappings for image creation.
@@ -26,7 +26,7 @@ pub struct FileMapping {
 ///
 /// # Errors
 /// Returns error if root is not a directory or filesystem operations fail
-pub fn create_mappings(root: &Utf8Path, exclude_root: bool) -> Result<Vec<FileMapping>> {
+pub fn create_mappings(root: &Path, exclude_root: bool) -> Result<Vec<FileMapping>> {
     if !root.is_dir() {
         bail!("root must be a directory")
     };
@@ -35,7 +35,7 @@ pub fn create_mappings(root: &Utf8Path, exclude_root: bool) -> Result<Vec<FileMa
         if !exclude_root {
             canon.pop();
         }
-        Utf8PathBuf::try_from(canon)?
+        canon
     };
     let tree = WalkDir::new(root);
     let rerooted_mappings = reroot_tree(&canon_root, tree)?;
@@ -89,7 +89,7 @@ pub fn examine(img_file: &File) -> Result<()> {
 ///
 /// # Errors
 /// Returns error if file not found or filesystem operations fail
-pub fn extract(img_file: &mut File, target_path: &Utf8Path, buf: &mut Vec<u8>) -> Result<()> {
+pub fn extract(img_file: &mut File, target_path: &Path, buf: &mut Vec<u8>) -> Result<()> {
     let fs = FileSystem::new(img_file, FsOptions::new())?;
     let root_dir = fs.root_dir();
     let target_parts = target_path.iter().collect::<Vec<_>>();
@@ -97,6 +97,10 @@ pub fn extract(img_file: &mut File, target_path: &Utf8Path, buf: &mut Vec<u8>) -
     // Navigate through directories to find the file
     let mut current_path = String::new();
     for (i, part) in target_parts.iter().enumerate() {
+        let part = part
+            .to_str()
+            .ok_or_else(|| anyhow!("invalid str {part:?}"))?;
+
         if i == target_parts.len() - 1 {
             // This is the filename, open the file
             let dir = if current_path.is_empty() {
@@ -141,7 +145,11 @@ fn write_fs(img_file: &mut File, tree: &[FileMapping], fat_type: fatfs::FatType)
             continue;
         }
 
-        let path_parts: Vec<&str> = internal_path.as_str().split('/').collect();
+        let path_parts: Vec<_> = internal_path
+            .to_str()
+            .ok_or_else(|| anyhow!("invalid str {internal_path:?}"))?
+            .split('/')
+            .collect();
 
         // Create parent directories as needed
         let mut current_dir = &root_dir;
@@ -331,15 +339,15 @@ fn shrink_file_after_deception(img_file: &mut File) -> Result<()> {
 }
 
 /// Returns `(total size, [(external src, internal path), ..])`
-fn reroot_tree(canon_root: &Utf8Path, walkdir: WalkDir) -> Result<Vec<FileMapping>> {
+fn reroot_tree(canon_root: &Path, walkdir: WalkDir) -> Result<Vec<FileMapping>> {
     let mut out = Vec::new();
     for entry in walkdir {
         let entry = entry?;
         let len = entry.metadata().map(|m| m.len()).unwrap_or(0);
-        let entry_path_buf = Utf8PathBuf::try_from(entry.path().to_path_buf())?;
+        let entry_path_buf = entry.path().to_path_buf();
         let rerooted_path = reroot_path(canon_root, &entry_path_buf)?;
-        println!("{rerooted_path} {entry_path_buf} {len}");
-        if rerooted_path != Utf8Path::new("") {
+        println!("{rerooted_path:?} {entry_path_buf:?} {len}");
+        if rerooted_path != Path::new("") {
             out.push(FileMapping {
                 ext: entry_path_buf,
                 int: rerooted_path,
@@ -349,9 +357,8 @@ fn reroot_tree(canon_root: &Utf8Path, walkdir: WalkDir) -> Result<Vec<FileMappin
     Ok(out)
 }
 
-fn reroot_path(canon_root: &Utf8Path, target: &Utf8Path) -> Result<Utf8PathBuf> {
+fn reroot_path(canon_root: &Path, target: &Path) -> Result<PathBuf> {
     let canon_target = target.canonicalize()?;
     let rerooted_target = canon_target.strip_prefix(canon_root)?.to_path_buf();
-    let rerooted_target = Utf8PathBuf::try_from(rerooted_target)?;
     Ok(rerooted_target)
 }
