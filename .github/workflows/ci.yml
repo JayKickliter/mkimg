@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ci:
+    name: CI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache | Rust
+        uses: actions/cache@v4
+        with:
+          key: ci-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ci-cargo
+          path: |
+            target/
+            ~/.cargo/bin/
+            ~/.cargo/git/db/
+            ~/.cargo/registry/cache/
+            ~/.cargo/registry/index/
+
+      - name: Install | Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+
+      - name: Build | Debug
+        run: cargo build
+
+      - name: Build | Release
+        run: cargo build --release
+
+      - name: Check | Clippy
+        run: cargo clippy -- -Wclippy::all
+
+      - name: Check | Formatting
+        run: cargo fmt --all --check -- --config imports_granularity=crate
+
+  release:
+    if: github.ref_type == 'tag'
+    name: Release
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install | Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build | Release
+        run: cargo build --release
+
+      - name: Prepare | Binaries
+        run: |
+          mkdir -p release
+          cp target/release/mkimg release/mkimg-x86_64-unknown-linux-gnu
+
+      - name: Publish | Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            release/mkimg-x86_64-unknown-linux-gnu
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

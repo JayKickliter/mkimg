@@ -15,6 +15,17 @@ pub struct FileMapping {
     pub int: Utf8PathBuf,
 }
 
+/// Scans a directory tree and creates file mappings for image creation.
+///
+/// # Arguments
+/// * `root` - Source directory to scan
+/// * `exclude_root` - If true, only directory contents are included. If false, the root directory itself becomes the image root
+///
+/// # Returns
+/// Vector of `FileMapping` structs containing source and destination paths
+///
+/// # Errors
+/// Returns error if root is not a directory or filesystem operations fail
 pub fn create_mappings(root: &Utf8Path, exclude_root: bool) -> Result<Vec<FileMapping>> {
     if !root.is_dir() {
         bail!("root must be a directory")
@@ -31,13 +42,27 @@ pub fn create_mappings(root: &Utf8Path, exclude_root: bool) -> Result<Vec<FileMa
     Ok(rerooted_mappings)
 }
 
-/// Create a plain image.
+/// Creates a standard FAT16 disk image (6MB fixed size).
+///
+/// # Arguments
+/// * `img_file` - Output file handle for the image
+/// * `file_mappings` - Vector of files to include in the image
+///
+/// # Errors
+/// Returns error if filesystem operations fail
 pub fn create(img_file: &mut File, file_mappings: &[FileMapping]) -> Result<()> {
     img_file.set_len(6 * 1024 * 1024)?;
     write_fs(img_file, file_mappings, fatfs::FatType::Fat16)?;
     Ok(())
 }
 
+/// Prints detailed contents of a disk image including directory structure and file contents for small files.
+///
+/// # Arguments
+/// * `img_file` - Image file to examine
+///
+/// # Errors
+/// Returns error if image cannot be read or is not a valid FAT filesystem
 pub fn examine(img_file: &File) -> Result<()> {
     let fs = FileSystem::new(img_file, FsOptions::new())?;
     let fs_root = fs.root_dir();
@@ -55,7 +80,15 @@ pub fn examine(img_file: &File) -> Result<()> {
     Ok(())
 }
 
-/// Extract a single file from the img.
+/// Extracts a single file from a disk image.
+///
+/// # Arguments
+/// * `img_file` - Source image file
+/// * `target_path` - Path to file within the image filesystem
+/// * `buf` - Buffer to store extracted file contents
+///
+/// # Errors
+/// Returns error if file not found or filesystem operations fail
 pub fn extract(img_file: &mut File, target_path: &Utf8Path, buf: &mut Vec<u8>) -> Result<()> {
     let fs = FileSystem::new(img_file, FsOptions::new())?;
     let root_dir = fs.root_dir();
@@ -201,6 +234,18 @@ fn examine_directory(
     Ok(())
 }
 
+/// Creates a deceptive FAT32 disk image that reports false size information.
+///
+/// Creates a 32MB FAT32 image, applies size deception to boot sector and FSInfo,
+/// then shrinks the file to actual content size while maintaining the deception.
+/// The resulting image will report 1.5x its actual size to basic filesystem queries.
+///
+/// # Arguments
+/// * `img_file` - Output file handle for the image
+/// * `file_mappings` - Vector of files to include in the image
+///
+/// # Errors
+/// Returns error if filesystem operations fail
 pub fn create_deceptive_img(img_file: &mut File, file_mappings: &[FileMapping]) -> Result<()> {
     // 32MB real size to ensure FAT32
     img_file.set_len(32 * 1024 * 1024)?;
