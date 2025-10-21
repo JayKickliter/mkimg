@@ -1,6 +1,9 @@
-use anyhow::{bail, Result};
 use clap::Parser;
-use mkimg::{self, FileMapping};
+use mkimg::{
+    self,
+    error::{MkimgError, MkimgRes},
+    FileMapping,
+};
 use std::{fs::File, path::PathBuf};
 
 #[derive(Parser)]
@@ -48,7 +51,7 @@ enum Commands {
     },
 }
 
-fn main() -> Result<()> {
+fn main() -> MkimgRes {
     let cli = Cli::parse();
     match cli.command {
         Commands::Create {
@@ -64,7 +67,9 @@ fn main() -> Result<()> {
                 let mut mappings = Vec::new();
                 for pair in map.chunks(2) {
                     if pair.len() != 2 {
-                        bail!("File mappings must be src dst src dst ..");
+                        return Err(MkimgError::validation(
+                            "File mappings must be src dst src dst ..",
+                        ));
                     }
                     mappings.push(FileMapping {
                         ext: pair[0].clone(),

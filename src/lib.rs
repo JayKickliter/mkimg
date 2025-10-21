@@ -1,4 +1,10 @@
-use anyhow::{anyhow, bail, Result};
+#![doc = include_str!("../README.md")]
+
+pub mod error;
+use crate::error::{
+    canonicalize_with_context, path_to_str_with_context, strip_prefix_with_context, MkimgError,
+    MkimgRes,
+};
 use fatfs::{FileSystem, FormatVolumeOptions, FsOptions};
 use std::{
     fs::File,
@@ -15,23 +21,30 @@ pub struct FileMapping {
     pub int: PathBuf,
 }
 
-/// Scans a directory tree and creates file mappings for image creation.
+/// Scans a directory tree and creates file mappings for image
+/// creation.
 ///
 /// # Arguments
 /// * `root` - Source directory to scan
-/// * `exclude_root` - If true, only directory contents are included. If false, the root directory itself becomes the image root
+/// * `exclude_root` - If true, only directory contents are
+///   included. If false, the root directory itself becomes the image
+///   root
 ///
 /// # Returns
-/// Vector of `FileMapping` structs containing source and destination paths
+///
+/// Vector of `FileMapping` structs containing source and destination
+/// paths
 ///
 /// # Errors
-/// Returns error if root is not a directory or filesystem operations fail
-pub fn create_mappings(root: &Path, exclude_root: bool) -> Result<Vec<FileMapping>> {
+///
+/// Returns error if root is not a directory or filesystem operations
+/// fail
+pub fn create_mappings(root: &Path, exclude_root: bool) -> MkimgRes<Vec<FileMapping>> {
     if !root.is_dir() {
-        bail!("root must be a directory")
+        return Err(MkimgError::validation("root must be a directory"));
     };
     let canon_root = {
-        let mut canon = root.canonicalize()?;
+        let mut canon = canonicalize_with_context(root)?;
         if !exclude_root {
             canon.pop();
         }
@@ -50,20 +63,24 @@ pub fn create_mappings(root: &Path, exclude_root: bool) -> Result<Vec<FileMappin
 ///
 /// # Errors
 /// Returns error if filesystem operations fail
-pub fn create(img_file: &mut File, file_mappings: &[FileMapping]) -> Result<()> {
+pub fn create(img_file: &mut File, file_mappings: &[FileMapping]) -> MkimgRes {
     img_file.set_len(6 * 1024 * 1024)?;
     write_fs(img_file, file_mappings, fatfs::FatType::Fat16)?;
     Ok(())
 }
 
-/// Prints detailed contents of a disk image including directory structure and file contents for small files.
+/// Prints detailed contents of a disk image including directory
+/// structure and file contents for small files.
 ///
 /// # Arguments
+///
 /// * `img_file` - Image file to examine
 ///
 /// # Errors
-/// Returns error if image cannot be read or is not a valid FAT filesystem
-pub fn examine(img_file: &File) -> Result<()> {
+///
+/// Returns error if image cannot be read or is not a valid FAT
+/// filesystem
+pub fn examine(img_file: &File) -> MkimgRes {
     let fs = FileSystem::new(img_file, FsOptions::new())?;
     let fs_root = fs.root_dir();
     for entry in fs_root.iter() {
@@ -83,13 +100,15 @@ pub fn examine(img_file: &File) -> Result<()> {
 /// Extracts a single file from a disk image.
 ///
 /// # Arguments
+///
 /// * `img_file` - Source image file
 /// * `target_path` - Path to file within the image filesystem
 /// * `buf` - Buffer to store extracted file contents
 ///
 /// # Errors
+///
 /// Returns error if file not found or filesystem operations fail
-pub fn extract(img_file: &mut File, target_path: &Path, buf: &mut Vec<u8>) -> Result<()> {
+pub fn extract(img_file: &mut File, target_path: &Path, buf: &mut Vec<u8>) -> MkimgRes {
     let fs = FileSystem::new(img_file, FsOptions::new())?;
     let root_dir = fs.root_dir();
     let target_parts = target_path.iter().collect::<Vec<_>>();
@@ -97,9 +116,12 @@ pub fn extract(img_file: &mut File, target_path: &Path, buf: &mut Vec<u8>) -> Re
     // Navigate through directories to find the file
     let mut current_path = String::new();
     for (i, part) in target_parts.iter().enumerate() {
-        let part = part
-            .to_str()
-            .ok_or_else(|| anyhow!("invalid str {part:?}"))?;
+        let part = part.to_str().ok_or_else(|| {
+            MkimgError::invalid_path(
+                PathBuf::from(part),
+                "invalid UTF-8 characters in path component",
+            )
+        })?;
 
         if i == target_parts.len() - 1 {
             // This is the filename, open the file
@@ -124,7 +146,7 @@ pub fn extract(img_file: &mut File, target_path: &Path, buf: &mut Vec<u8>) -> Re
 }
 
 // Create filesystem with FAT32 and copy files
-fn write_fs(img_file: &mut File, tree: &[FileMapping], fat_type: fatfs::FatType) -> Result<()> {
+fn write_fs(img_file: &mut File, tree: &[FileMapping], fat_type: fatfs::FatType) -> MkimgRes {
     {
         fatfs::format_volume(
             &mut *img_file,
@@ -145,9 +167,7 @@ fn write_fs(img_file: &mut File, tree: &[FileMapping], fat_type: fatfs::FatType)
             continue;
         }
 
-        let path_parts: Vec<_> = internal_path
-            .to_str()
-            .ok_or_else(|| anyhow!("invalid str {internal_path:?}"))?
+        let path_parts: Vec<_> = path_to_str_with_context(internal_path)?
             .split('/')
             .collect();
 
@@ -185,11 +205,7 @@ fn write_fs(img_file: &mut File, tree: &[FileMapping], fat_type: fatfs::FatType)
     Ok(())
 }
 
-fn examine_directory(
-    parent_dir: &fatfs::Dir<'_, &File>,
-    dir_name: &str,
-    depth: usize,
-) -> Result<()> {
+fn examine_directory(parent_dir: &fatfs::Dir<'_, &File>, dir_name: &str, depth: usize) -> MkimgRes {
     let indent = "  ".repeat(depth + 1);
     if let Ok(subdir) = parent_dir.open_dir(dir_name) {
         println!("{}Contents of {}:", indent, dir_name);
@@ -242,19 +258,23 @@ fn examine_directory(
     Ok(())
 }
 
-/// Creates a deceptive FAT32 disk image that reports false size information.
+/// Creates a deceptive FAT32 disk image that reports false size
+/// information.
 ///
-/// Creates a 32MB FAT32 image, applies size deception to boot sector and FSInfo,
-/// then shrinks the file to actual content size while maintaining the deception.
-/// The resulting image will report 1.5x its actual size to basic filesystem queries.
+/// Creates a 32MB FAT32 image, applies size deception to boot sector
+/// and FSInfo, then shrinks the file to actual content size while
+/// maintaining the deception.  The resulting image will report 1.5x
+/// its actual size to basic filesystem queries.
 ///
 /// # Arguments
+///
 /// * `img_file` - Output file handle for the image
 /// * `file_mappings` - Vector of files to include in the image
 ///
 /// # Errors
+///
 /// Returns error if filesystem operations fail
-pub fn create_deceptive_img(img_file: &mut File, file_mappings: &[FileMapping]) -> Result<()> {
+pub fn create_deceptive_img(img_file: &mut File, file_mappings: &[FileMapping]) -> MkimgRes {
     // 32MB real size to ensure FAT32
     img_file.set_len(32 * 1024 * 1024)?;
     write_fs(img_file, file_mappings, fatfs::FatType::Fat32)?;
@@ -264,7 +284,7 @@ pub fn create_deceptive_img(img_file: &mut File, file_mappings: &[FileMapping]) 
     Ok(())
 }
 
-fn apply_size_deception(img_file: &mut File) -> Result<()> {
+fn apply_size_deception(img_file: &mut File) -> MkimgRes {
     // Read the current boot sector
     let mut boot_sector = [0u8; 512];
     img_file.read_exact(&mut boot_sector)?;
@@ -315,7 +335,7 @@ fn apply_size_deception(img_file: &mut File) -> Result<()> {
     Ok(())
 }
 
-fn shrink_file_after_deception(img_file: &mut File) -> Result<()> {
+fn shrink_file_after_deception(img_file: &mut File) -> MkimgRes {
     // Find the last non-zero byte to determine minimum file size
     // Start from a reasonable minimum (like 512KB) and extend as needed
     let min_size = 512 * 1024; // 512KB minimum
@@ -339,7 +359,7 @@ fn shrink_file_after_deception(img_file: &mut File) -> Result<()> {
 }
 
 /// Returns `(total size, [(external src, internal path), ..])`
-fn reroot_tree(canon_root: &Path, walkdir: WalkDir) -> Result<Vec<FileMapping>> {
+fn reroot_tree(canon_root: &Path, walkdir: WalkDir) -> MkimgRes<Vec<FileMapping>> {
     let mut out = Vec::new();
     for entry in walkdir {
         let entry = entry?;
@@ -357,8 +377,8 @@ fn reroot_tree(canon_root: &Path, walkdir: WalkDir) -> Result<Vec<FileMapping>> 
     Ok(out)
 }
 
-fn reroot_path(canon_root: &Path, target: &Path) -> Result<PathBuf> {
-    let canon_target = target.canonicalize()?;
-    let rerooted_target = canon_target.strip_prefix(canon_root)?.to_path_buf();
+fn reroot_path(canon_root: &Path, target: &Path) -> MkimgRes<PathBuf> {
+    let canon_target = canonicalize_with_context(target)?;
+    let rerooted_target = strip_prefix_with_context(&canon_target, canon_root)?.to_path_buf();
     Ok(rerooted_target)
 }
