@@ -67,7 +67,7 @@ mkimg extract disk.img "path/in/image.txt" output.txt
 
 ### Core Functions
 
-#### `create_mappings(root: &Utf8Path, exclude_root: bool) -> Result<Vec<FileMapping>>`
+#### `create_mappings(root: &Path, exclude_root: bool) -> Result<Vec<FileMapping>>`
 
 Scans a directory tree and creates file mappings for image creation.
 
@@ -100,7 +100,7 @@ file contents for small files.
 
 - `img_file` - Image file to examine
 
-#### `extract(img_file: &mut File, target_path: &Utf8Path, buf: &mut Vec<u8>) -> Result<()>`
+#### `extract(img_file: &mut File, target_path: &Path, buf: &mut Vec<u8>) -> Result<()>`
 
 Extracts a single file from a disk image.
 
@@ -116,8 +116,8 @@ Represents mapping between external filesystem and image filesystem paths.
 
 ```rust
 pub struct FileMapping {
-    pub ext: Utf8PathBuf,  // Source file path
-    pub int: Utf8PathBuf,  // Destination path in image
+    pub ext: PathBuf,  // Source file path
+    pub int: PathBuf,  // Destination path in image
 }
 ```
 
@@ -136,14 +136,6 @@ pub struct FileMapping {
 - FAT32 for deceptive images
 - Automatic directory creation
 - Preserves file contents and basic directory structure
-
-### Dependencies
-
-- `fatfs` - FAT filesystem implementation
-- `walkdir` - Directory traversal
-- `camino` - UTF-8 path handling
-- `clap` - CLI argument parsing
-- `anyhow` - Error handling
 
 ## License
 
