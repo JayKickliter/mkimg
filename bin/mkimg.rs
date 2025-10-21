@@ -1,6 +1,5 @@
 use clap::Parser;
 use mkimg::{
-    self,
     error::{MkimgError, MkimgRes},
     FileMapping,
 };
